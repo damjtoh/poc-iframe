@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Third-Party App</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        background-color: #e8f5e9;
+        padding: 15px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Third-Party App (Origin: http://localhost:3001)</h1>
+    <p>Status: <strong id="status">Initializing...</strong></p>
+    <button id="apiCallBtn" disabled>Call Firmware API (via SDK)</button>
+    <hr />
+    <h2>Log</h2>
+    <pre
+      id="log"
+      style="
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        border: 1px solid #ccc;
+        padding: 5px;
+        height: 200px;
+        overflow-y: scroll;
+        background: #fff;
+      "
+    ></pre>
+
+    <script src="sdk.mjs" type="module"></script>
+
+    <script>
+      const statusElement = document.getElementById("status");
+      const logElement = document.getElementById("log");
+      const apiCallBtn = document.getElementById("apiCallBtn");
+
+      function log(message) {
+        console.log("[App]", message);
+        logElement.textContent += `[${new Date().toLocaleTimeString()}] ${message}\n`;
+        logElement.scrollTop = logElement.scrollHeight;
+      }
+
+      // --- SDK Event Handling ---
+      // The SDK will update our status via this global function (or use events/callbacks)
+      function handleSdkStatusUpdate(sdkStatus, message) {
+        log(`SDK Status Update: ${sdkStatus} - ${message || ""}`);
+        statusElement.textContent = sdkStatus;
+        if (sdkStatus === "Authenticated") {
+          apiCallBtn.disabled = false;
+          statusElement.style.color = "green";
+        } else if (sdkStatus === "Authentication Failed") {
+          statusElement.style.color = "red";
+          apiCallBtn.disabled = true;
+        } else {
+          statusElement.style.color = "orange";
+          apiCallBtn.disabled = true;
+        }
+      }
+
+      function handleSdkApiResponse(response) {
+        log(`Received API Response from SDK: ${JSON.stringify(response)}`);
+        alert(`API Response: ${JSON.stringify(response.result)}`);
+      }
+
+      // --- Button Action ---
+      apiCallBtn.addEventListener("click", () => {
+        log("API Call button clicked.");
+        const payload = { data: "someValue", timestamp: Date.now() };
+        // Use the function exposed by the SDK
+        if (window.mySDK && typeof window.mySDK.callFirmware === "function") {
+          log(
+            `Calling mySDK.callFirmware('getDeviceInfo', ${JSON.stringify(
+              payload
+            )})`
+          );
+          window.mySDK.callFirmware("getDeviceInfo", payload);
+        } else {
+          log(
+            "Error: SDK is not available or callFirmware function is missing."
+          );
+          alert("SDK Error!");
+        }
+      });
+
+      // --- Initialization ---
+      log("Third-Party App initialized. Waiting for SDK.");
+      // The SDK script (sdk.js) will call handleSdkStatusUpdate when ready/authenticated.
+    </script>
+  </body>
+</html>

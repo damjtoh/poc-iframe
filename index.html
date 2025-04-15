@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OS Launcher</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        background-color: #e0f7fa;
+        padding: 15px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>OS Launcher App (Origin: http://localhost:3000)</h1>
+    <p>This app has special firmware access (simulated).</p>
+    <button id="launchAppBtn">Launch Third-Party App</button>
+    <hr />
+    <h2>Log</h2>
+    <pre
+      id="log"
+      style="
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        border: 1px solid #ccc;
+        padding: 5px;
+        height: 200px;
+        overflow-y: scroll;
+        background: #fff;
+      "
+    ></pre>
+
+    <script>
+      const logElement = document.getElementById("log");
+      const launchAppBtn = document.getElementById("launchAppBtn");
+
+      // --- Configuration ---
+      // In a real TV OS, these origins would be managed more robustly
+      const LAUNCHER_ORIGIN = "http://localhost:3000";
+      const IFRAME_HANDLER_URL = `${LAUNCHER_ORIGIN}/launcher-iframe-handler.html`;
+      const THIRD_PARTY_APP_URL = "http://localhost:3001"; // Served from different port
+      const THIRD_PARTY_APP_ORIGIN = "http://localhost:3001";
+      const TOKEN_EXPIRY_MS = 30000; // 30 seconds
+
+      function log(message) {
+        console.log("[Launcher]", message);
+        logElement.textContent += `[${new Date().toLocaleTimeString()}] ${message}\n`;
+        logElement.scrollTop = logElement.scrollHeight;
+      }
+
+      // IMPORTANT: Use crypto.randomUUID() in production for secure random tokens
+      function generatePseudoSecureToken() {
+        // Good enough for demo, NOT for production
+        return (
+          Math.random().toString(36).substring(2, 15) +
+          Math.random().toString(36).substring(2, 15)
+        );
+      }
+
+      function generateAndStoreToken(appOrigin) {
+        const token = generatePseudoSecureToken();
+        const tokenData = {
+          token: token,
+          expectedOrigin: appOrigin, // Store the origin this token is intended for
+          timestamp: Date.now(),
+        };
+        // Use a key that's easy to find later
+        const storageKey = `pending_sdk_token_${token}`;
+
+        try {
+          // Use localStorage - cleared automatically when session ends
+          localStorage.setItem(storageKey, JSON.stringify(tokenData));
+          log(
+            `Generated token ${token} for origin ${appOrigin} and stored in localStorage.`
+          );
+
+          // Set a timer to clean up this specific token if it's not used quickly
+          // This handles cases where the app fails to load or send the token back
+          setTimeout(() => {
+            if (localStorage.getItem(storageKey)) {
+              log(
+                `Cleaning up expired/unused token ${token} from localStorage.`
+              );
+              localStorage.removeItem(storageKey);
+            }
+          }, TOKEN_EXPIRY_MS + 5000); // A bit longer than expiry time
+
+          return token;
+        } catch (e) {
+          log(`Error storing token in localStorage: ${e.message}`);
+          alert("Error storing token. Check browser permissions/settings.");
+          return null;
+        }
+      }
+
+      // Simulate the firmware's window.openApp function
+      function openApp(url) {
+        log(`Calling 'window.openApp' with URL: ${url}`);
+        // Using window.open for simulation
+        window.open(url, "_blank", "noopener,noreferrer");
+      }
+
+      launchAppBtn.addEventListener("click", () => {
+        log("Launch button clicked.");
+        const token = generateAndStoreToken(THIRD_PARTY_APP_ORIGIN);
+
+        if (token) {
+          const urlWithToken = `${THIRD_PARTY_APP_URL}?sdkAuthToken=${encodeURIComponent(
+            token
+          )}`;
+          openApp(urlWithToken);
+        } else {
+          log("Failed to generate/store token. Aborting launch.");
+        }
+      });
+
+      log("Launcher initialized. Waiting for launch command.");
+      log(`Iframe handler URL will be: ${IFRAME_HANDLER_URL}`);
+      log(`Target App URL will be: ${THIRD_PARTY_APP_URL}`);
+    </script>
+  </body>
+</html>

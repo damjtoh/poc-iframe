@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Launcher Iframe Handler</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        background-color: #fff9c4;
+        padding: 5px;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <p>Launcher Iframe Handler (Origin: http://localhost:3000)</p>
+    <pre
+      id="log"
+      style="
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        border: 1px dashed #ccc;
+        padding: 3px;
+        height: 100px;
+        overflow-y: scroll;
+        background: #fff;
+      "
+    ></pre>
+    <script>
+      const logElement = document.getElementById("log");
+      const LAUNCHER_ORIGIN = "http://localhost:3000"; // My own origin
+      const TOKEN_EXPIRY_MS = 30000; // Must match launcher
+
+      let authenticatedSource = null; // Will store the window object of the authenticated SDK
+      let authenticatedOrigin = null; // Will store the origin of the authenticated SDK
+
+      function log(message) {
+        console.log("[Launcher Iframe]", message);
+        logElement.textContent += `[${new Date().toLocaleTimeString()}] ${message}\n`;
+        logElement.scrollTop = logElement.scrollHeight;
+      }
+
+      // --- Token Verification ---
+      function verifyToken(receivedToken, senderOrigin) {
+        const storageKey = `pending_sdk_token_${receivedToken}`;
+        log(
+          `Attempting to verify token ${receivedToken} from origin ${senderOrigin}`
+        );
+        const storedDataString = localStorage.getItem(storageKey);
+
+        // CRUCIAL: Remove immediately after reading to prevent reuse.
+        // If verification fails below, it's still removed.
+        if (storedDataString) {
+          localStorage.removeItem(storageKey);
+          log(`Removed token ${receivedToken} from localStorage.`);
+        } else {
+          log(`Token ${receivedToken} not found in localStorage.`);
+          return { valid: false, reason: "Token not found or already used." };
+        }
+
+        try {
+          const storedData = JSON.parse(storedDataString);
+
+          // 1. Check origin match
+          if (storedData.expectedOrigin !== senderOrigin) {
+            log(
+              `Verification failed: Origin mismatch. Expected ${storedData.expectedOrigin}, got ${senderOrigin}`
+            );
+            return {
+              valid: false,
+              reason: `Origin mismatch. Expected ${storedData.expectedOrigin}`,
+            };
+          }
+
+          // 2. Check expiration
+          if (Date.now() - storedData.timestamp > TOKEN_EXPIRY_MS) {
+            log(
+              `Verification failed: Token expired. Issued at ${new Date(
+                storedData.timestamp
+              ).toLocaleTimeString()}`
+            );
+            return { valid: false, reason: "Token expired." };
+          }
+
+          // 3. Check token value integrity (paranoid check, should match given key structure)
+          if (storedData.token !== receivedToken) {
+            log(`Verification failed: Internal token mismatch.`); // Should not happen
+            return { valid: false, reason: "Internal token mismatch." };
+          }
+
+          log(
+            `Verification SUCCESS for token ${receivedToken} from origin ${senderOrigin}`
+          );
+          return { valid: true };
+        } catch (e) {
+          log(
+            `Verification failed: Error parsing stored token data - ${e.message}`
+          );
+          return { valid: false, reason: "Error processing token data." };
+        }
+      }
+
+      // --- Simulated Firmware API ---
+      function handleApiCall(action, payload) {
+        log(
+          `Simulating firmware call: Action='${action}', Payload=${JSON.stringify(
+            payload
+          )}`
+        );
+        // In real life, interact with firmware here
+        return {
+          success: true,
+          result: `Action '${action}' executed successfully at ${new Date().toLocaleTimeString()}`,
+        };
+      }
+
+      // --- Message Handling ---
+      window.addEventListener("message", (event) => {
+        // ... origin checks description ...
+
+        // *** CORRECTED LINE ***
+        log(
+          `Received message: Type='${event.data && event.data.type}', Origin='${
+            event.origin
+          }'`
+        );
+
+        if (!event.data || typeof event.data !== "object") {
+          log("Ignoring invalid message format.");
+          return;
+        }
+
+        switch (event.data.type) {
+          case "authenticate":
+            if (authenticatedSource) {
+              log("Ignoring duplicate authentication attempt.");
+              return; // Already authenticated
+            }
+            const token = event.data.token;
+            if (!token) {
+              log("Authentication message missing token.");
+              return;
+            }
+
+            const verificationResult = verifyToken(token, event.origin);
+
+            if (verificationResult.valid) {
+              authenticatedSource = event.source; // Store the specific window proxy
+              authenticatedOrigin = event.origin; // Store the verified origin
+              log(
+                `Authentication successful for origin ${authenticatedOrigin}. Sending confirmation.`
+              );
+              authenticatedSource.postMessage(
+                { type: "auth_success" },
+                authenticatedOrigin
+              ); // Target the specific origin
+            } else {
+              log(
+                `Authentication failed: ${verificationResult.reason}. Sending failure message.`
+              );
+              // Still use event.source/event.origin because we need to tell the sender it failed
+              event.source.postMessage(
+                { type: "auth_failure", reason: verificationResult.reason },
+                event.origin
+              );
+            }
+            break;
+
+          case "api_call":
+            // SECURITY: Check if the message comes from the *already authenticated* source and origin
+            if (
+              event.source !== authenticatedSource ||
+              event.origin !== authenticatedOrigin
+            ) {
+              log(
+                `Ignoring API call from unauthenticated source/origin (${event.origin})`
+              );
+              // Optionally send an error back? Be careful not to leak info.
+              // event.source.postMessage({ type: 'api_error', reason: 'Not authenticated' }, event.origin);
+              return;
+            }
+
+            const action = event.data.action;
+            const payload = event.data.payload;
+            const apiResult = handleApiCall(action, payload);
+
+            log(`Sending API result back to ${authenticatedOrigin}`);
+            authenticatedSource.postMessage(
+              {
+                type: "api_result",
+                originalAction: action,
+                result: apiResult,
+              },
+              authenticatedOrigin
+            ); // Target the specific origin
+            break;
+
+          default:
+            log(`Ignoring unknown message type: ${event.data.type}`);
+        }
+      });
+
+      log("Iframe handler loaded and listening for messages.");
+    </script>
+  </body>
+</html>
